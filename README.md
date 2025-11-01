@@ -132,9 +132,7 @@ Le script `create_database_users.py` met en place des utilisateurs avec des rôl
 
 ### Gestion des identifiants
 
-Les informations d'identification (noms d'utilisateur, mots de passe) ne sont pas stockées en clair dans le code ou les fichiers de configuration. Elles sont gérées via des variables d'environnement, dans un fichier `.env`.
-
-Ce fichier est spécifiquement listé dans le `.gitignore` pour s'assurer qu'il ne soit jamais versionné, évitant ainsi toute fuite accidentelle d'informations sensibles.
+Les informations d'identification (noms d'utilisateur, mots de passe) ne sont pas stockées en clair dans le code ou les fichiers de configuration. Elles sont gérées via des variables d'environnement, dans un fichier `.env`. Ce fichier est spécifiquement listé dans le `.gitignore` pour s'assurer qu'il ne soit jamais versionné, évitant ainsi toute fuite accidentelle d'informations sensibles.
 
 ### Chaîne de connexion (MONGO_URI)
 
