@@ -1,83 +1,139 @@
 import os
-import csv
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
+from bson.objectid import ObjectId
+from bson.decimal128 import Decimal128
+from datetime import datetime
 
-def get_csv_headers(file_path):
-    """Lit la première ligne d'un fichier CSV et retourne les en-têtes."""
-    try:
-        with open(file_path, mode='r', encoding='utf-8') as csv_file:
-            reader = csv.reader(csv_file)
-            headers = next(reader)
-            return headers
-    except FileNotFoundError:
-        print(f"Erreur : Le fichier CSV {file_path} n'a pas été trouvé.")
-        return None
-    except Exception as e:
-        print(f"Erreur lors de la lecture des en-têtes CSV : {e}")
-        return None
-
-def test_data_integrity(db_name, collection_name, mongo_uri=None):
+def test_data_integrity(db_name, mongo_uri=None):
     """
-    Effectue des tests d'intégrité des données sur une collection MongoDB.
+    Effectue des tests d'intégrité des données sur MongoDB
+    structurée en quatre collections : patients, admissions, insurances, treatments.
 
     :param db_name: Nom de la base de données MongoDB.
-    :param collection_name: Nom de la collection MongoDB.
     :param mongo_uri: L'URI de connexion MongoDB.
     """
     if mongo_uri is None:
         mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
+
+    print("Démarrage des tests d'intégrité des données pour le schéma multi-collections...")
     
-    cleaned_csv_path = os.getenv('OUTPUT_CSV_FILE', 'healthcare_dataset_cleaned.csv')
+    try:
+        client = MongoClient(mongo_uri)
+        db = client[db_name]
+        print("Connexion à MongoDB réussie.")
+    except ConnectionFailure as e:
+        print(f"Échec de la connexion à MongoDB : {e}")
+        return
 
-    print("Démarrage des tests d'intégrité des données...")
-    client = MongoClient(mongo_uri)
-    db = client[db_name]
-    collection = db[collection_name]
+    # Collections
+    patients_col = db["patients"]
+    admissions_col = db["admissions"]
+    insurances_col = db["insurances"]
+    treatments_col = db["treatments"]
 
-    document_count = collection.count_documents({})
-    print(f"Test 1 : Nombre de documents. Trouvé {document_count} documents.")
-    assert document_count > 0, "Échec du test 1 : Aucun document trouvé dans la collection."
-    print("Test 1 réussi : La collection n'est pas vide.")
+    # Test 1: Comptage des documents
+    print("\n Test 1: Comptage des documents")
+    try:
+        patient_count = patients_col.count_documents({})
+        admission_count = admissions_col.count_documents({})
+        insurance_count = insurances_col.count_documents({})
+        treatment_count = treatments_col.count_documents({})
 
-    expected_fields = get_csv_headers(cleaned_csv_path)
-    if not expected_fields:
-        print("Impossible de procéder aux tests de champs et de doublons sans les en-têtes CSV.")
+        print(f"Documents trouvés :")
+        print(f"  - Patients: {patient_count}")
+        print(f"  - Admissions: {admission_count}")
+        print(f"  - Insurances: {insurance_count}")
+        print(f"  - Treatments: {treatment_count}")
+
+        assert patient_count > 0, "La collection 'patients' est vide."
+        assert patient_count == admission_count == insurance_count == treatment_count, "Les collections n'ont pas le même nombre de documents."
+        print("Test 1 Réussi : Toutes les collections ont le même nombre de documents et ne sont pas vides.")
+    except Exception as e:
+        print(f"Échec du Test 1 : {e}")
         client.close()
         return
 
-    print("\nTest 2 : Présence des champs.")
-    sample_document = collection.find_one()
-    missing_fields = [field for field in expected_fields if field not in sample_document]
-    assert not missing_fields, f"Échec du test 2 : Champs manquants : {missing_fields}"
-    print("Test 2 réussi : Tous les champs attendus sont présents dans un document échantillon.")
+    # Test 2: Intégrité Référentielle
+    print("\n Test 2: Intégrité Référentielle")
+    try:
+        # On teste sur un échantillon pour ne pas surcharger
+        sample_admission = admissions_col.find_one()
+        if sample_admission:
+            patient_id = sample_admission['patient_id']
+            assert patients_col.count_documents({'_id': patient_id}) == 1, f"L'ID patient {patient_id} de 'admissions' n'existe pas dans 'patients'."
+        
+        sample_insurance = insurances_col.find_one()
+        if sample_insurance:
+            patient_id = sample_insurance['patient_id']
+            assert patients_col.count_documents({'_id': patient_id}) == 1, f"L'ID patient {patient_id} de 'insurances' n'existe pas dans 'patients'."
 
-    print("\nTest 3 : Vérifier les valeurs nulles ou vides dans le champ 'Name'.")
-    null_name_count = collection.count_documents({"Name": {"$in": [None, ""]}})
-    assert null_name_count == 0, f"Échec du test 3 : Trouvé {null_name_count} documents avec des noms nuls ou vides."
-    print("Test 3 réussi : Aucun document avec des noms nuls ou vides.")
+        sample_treatment = treatments_col.find_one()
+        if sample_treatment:
+            patient_id = sample_treatment['patient_id']
+            assert patients_col.count_documents({'_id': patient_id}) == 1, f"L'ID patient {patient_id} de 'treatments' n'existe pas dans 'patients'."
+        
+        print("Test 2 Réussi : L'intégrité référentielle est valide pour les documents échantillons.")
+    except Exception as e:
+        print(f"Échec du Test 2 : {e}")
+        client.close()
+        return
 
-    print("\nTest 4 : Vérifier les documents en double.")
-    pipeline = [
-        {
-            "$group": {
-                "_id": {key: f"${key}" for key in expected_fields}, 
-                "count": {"$sum": 1}
-            }
-        },
-        {
-            "$match": {
-                "count": {"$gt": 1}
-            }
-        }
-    ]
-    duplicates = list(collection.aggregate(pipeline))
-    assert len(duplicates) == 0, f"Échec du test 4 : Trouvé {len(duplicates)} documents en double."
-    print("Test 4 réussi : Aucun document en double trouvé.")
+    # Test 3: Validation du Schéma
+    print("\n Test 3: Validation du Schéma (Présence des champs)")
+    try:
+        patient_doc = patients_col.find_one()
+        admission_doc = admissions_col.find_one()
+        insurance_doc = insurances_col.find_one()
+        treatment_doc = treatments_col.find_one()
 
-    print("\nTous les tests d'intégrité des données ont réussi !")
+        expected_patient_fields = ["name", "age", "gender", "blood_type", "medical_condition"]
+        expected_admission_fields = ["patient_id", "date_of_admission", "discharge_date", "doctor", "hospital"]
+        expected_insurance_fields = ["patient_id", "provider", "billing_amount"]
+        expected_treatment_fields = ["patient_id", "medication", "test_results"]
+
+        for field in expected_patient_fields:
+            assert field in patient_doc, f"Champ manquant '{field}' dans 'patients'"
+        print("Schéma 'patients' validé.")
+
+        for field in expected_admission_fields:
+            assert field in admission_doc, f"Champ manquant '{field}' dans 'admissions'"
+        print("Schéma 'admissions' validé.")
+
+        for field in expected_insurance_fields:
+            assert field in insurance_doc, f"Champ manquant '{field}' dans 'insurances'"
+        print("Schéma 'insurances' validé.")
+
+        for field in expected_treatment_fields:
+            assert field in treatment_doc, f"Champ manquant '{field}' dans 'treatments'"
+        print("Schéma 'treatments' validé.")
+
+        print("Test 3 Réussi : Les schémas des collections sont valides.")
+    except Exception as e:
+        print(f"Échec du Test 3 : {e}")
+        client.close()
+        return
+
+    # Test 4: Validation des types de données
+    print("\n Test 4: Validation des types de données")
+    try:
+        patient_doc = patients_col.find_one()
+        admission_doc = admissions_col.find_one()
+        insurance_doc = insurances_col.find_one()
+
+        assert isinstance(patient_doc['age'], int),
+        assert isinstance(admission_doc['date_of_admission'], datetime), 
+        assert isinstance(insurance_doc['billing_amount'], Decimal128), 
+        
+        print("Test 4 Réussi : Les types de données sont valides pour les champs testés.")
+    except Exception as e:
+        print(f"Échec du Test 4 : {e}")
+        client.close()
+        return
+
+    print("\n Tous les tests d'intégrité des données ont réussi !")
     client.close()
 
 if __name__ == "__main__":
-    DB_NAME = 'healthcare'
-    COLLECTION_NAME = 'patients'
-    test_data_integrity(DB_NAME, COLLECTION_NAME)
+    DB_NAME = os.getenv('DB_NAME', 'healthcare')
+    test_data_integrity(DB_NAME)
