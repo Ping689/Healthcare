@@ -55,7 +55,7 @@ def migrate_csv_to_mongodb(csv_file_path, db_name, mongo_uri):
             total_rows = 0
             for row in csv_reader:
                 try:
-                    # 1. Créer et insérer le document patient
+                    # Créer et insérer le document patient
                     patient_doc = {
                         "name": row["Name"],
                         "age": int(row["Age"]),
@@ -65,7 +65,7 @@ def migrate_csv_to_mongodb(csv_file_path, db_name, mongo_uri):
                     }
                     patient_id = patients_collection.insert_one(patient_doc).inserted_id
 
-                    # 2. Créer et insérer le document admission
+                    # Créer et insérer le document admission
                     admission_doc = {
                         "patient_id": patient_id,
                         "date_of_admission": datetime.strptime(row["Date of Admission"], '%Y-%m-%d'),
@@ -77,7 +77,7 @@ def migrate_csv_to_mongodb(csv_file_path, db_name, mongo_uri):
                     }
                     admissions_collection.insert_one(admission_doc)
 
-                    # 3. Créer et insérer le document assurance
+                    # Créer et insérer le document assurance
                     insurance_doc = {
                         "patient_id": patient_id,
                         "provider": row["Insurance Provider"],
@@ -85,7 +85,7 @@ def migrate_csv_to_mongodb(csv_file_path, db_name, mongo_uri):
                     }
                     insurances_collection.insert_one(insurance_doc)
 
-                    # 4. Créer et insérer le document traitement
+                    # Créer et insérer le document traitement
                     treatment_doc = {
                         "patient_id": patient_id,
                         "medication": row["Medication"],
