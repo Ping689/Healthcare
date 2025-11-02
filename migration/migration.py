@@ -1,21 +1,22 @@
 import csv
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
+from bson.objectid import ObjectId
 from bson.decimal128 import Decimal128
 from decimal import Decimal
 from datetime import datetime
 import os
 
-def migrate_csv_to_mongodb(csv_file_path, db_name, collection_name, mongo_uri):
+def migrate_csv_to_mongodb(csv_file_path, db_name, mongo_uri):
     """
-    Migre les données d'un fichier CSV nettoyé vers une collection MongoDB.
+    Migre les données d'un fichier CSV vers MongoDB
+    avec plusieurs collections (Patients, Admissions, Insurances, Treatments).
 
     :param csv_file_path: Chemin vers le fichier CSV nettoyé.
     :param db_name: Nom de la base de données MongoDB.
-    :param collection_name: Nom de la collection MongoDB.
     :param mongo_uri: L'URI de connexion MongoDB.
     """
-    print("Démarrage du processus de migration depuis un fichier nettoyé...")
+    print("Démarrage du processus de migration multi-collections...")
 
     try:
         client = MongoClient(mongo_uri)
@@ -26,35 +27,79 @@ def migrate_csv_to_mongodb(csv_file_path, db_name, collection_name, mongo_uri):
         return
 
     db = client[db_name]
-    collection = db[collection_name]
+    
+    # Définition des collections
+    patients_collection = db["patients"]
+    admissions_collection = db["admissions"]
+    insurances_collection = db["insurances"]
+    treatments_collection = db["treatments"]
 
-    print(f"Nettoyage des données existantes de la collection : {collection_name}...")
-    collection.delete_many({})
+    collections = {
+        "patients": patients_collection,
+        "admissions": admissions_collection,
+        "insurances": insurances_collection,
+        "treatments": treatments_collection
+    }
 
-    print(f"Lecture des données depuis {csv_file_path} et insertion dans MongoDB...")
+    # Nettoyage des collections existantes
+    for name, collection in collections.items():
+        print(f"Nettoyage de la collection : {name}...")
+        collection.delete_many({})
+
+    print(f"Lecture des données depuis {csv_file_path} et insertion dans les collections...")
+    
     try:
         with open(csv_file_path, mode='r', encoding='utf-8') as csv_file:
             csv_reader = csv.DictReader(csv_file)
             
-            data_to_insert = []
+            total_rows = 0
             for row in csv_reader:
                 try:
-                    # Conversion des types de données pour MongoDB
-                    row['Age'] = int(row['Age'])
-                    row['Billing Amount'] = Decimal128(Decimal(row['Billing Amount']))
-                    row['Date of Admission'] = datetime.strptime(row['Date of Admission'], '%Y-%m-%d')
-                    row['Discharge Date'] = datetime.strptime(row['Discharge Date'], '%Y-%m-%d')
+                    # 1. Créer et insérer le document patient
+                    patient_doc = {
+                        "name": row["Name"],
+                        "age": int(row["Age"]),
+                        "gender": row["Gender"],
+                        "blood_type": row["Blood Type"],
+                        "medical_condition": row["Medical Condition"]
+                    }
+                    patient_id = patients_collection.insert_one(patient_doc).inserted_id
+
+                    # 2. Créer et insérer le document admission
+                    admission_doc = {
+                        "patient_id": patient_id,
+                        "date_of_admission": datetime.strptime(row["Date of Admission"], '%Y-%m-%d'),
+                        "admission_type": row["Admission Type"],
+                        "discharge_date": datetime.strptime(row["Discharge Date"], '%Y-%m-%d'),
+                        "room_number": int(row.get("Room Number", 0)),
+                        "doctor": row["Doctor"],
+                        "hospital": row["Hospital"]
+                    }
+                    admissions_collection.insert_one(admission_doc)
+
+                    # 3. Créer et insérer le document assurance
+                    insurance_doc = {
+                        "patient_id": patient_id,
+                        "provider": row["Insurance Provider"],
+                        "billing_amount": Decimal128(Decimal(row["Billing Amount"]))
+                    }
+                    insurances_collection.insert_one(insurance_doc)
+
+                    # 4. Créer et insérer le document traitement
+                    treatment_doc = {
+                        "patient_id": patient_id,
+                        "medication": row["Medication"],
+                        "test_results": row["Test Results"]
+                    }
+                    treatments_collection.insert_one(treatment_doc)
                     
+                    total_rows += 1
+
                 except (ValueError, TypeError, KeyError) as e:
                     print(f"Ligne ignorée en raison d'une erreur de conversion ou de clé manquante : {row} - Erreur : {e}")
                     continue
-                data_to_insert.append(row)
-   
-            if data_to_insert:
-                collection.insert_many(data_to_insert)
-                print(f"{len(data_to_insert)} documents insérés avec succès dans la collection.")
-            else:
-                print("Aucune donnée à insérer.")
+            
+            print(f"{total_rows} patients et leurs données associées ont été insérés avec succès.")
 
     except FileNotFoundError:
         print(f"Erreur : Le fichier {csv_file_path} n'a pas été trouvé.")
@@ -67,6 +112,6 @@ def migrate_csv_to_mongodb(csv_file_path, db_name, collection_name, mongo_uri):
 if __name__ == "__main__":
     CSV_FILE = os.getenv('OUTPUT_CSV_FILE', 'healthcare_dataset_cleaned.csv')
     DB_NAME = os.getenv('DB_NAME', 'healthcare')
-    COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'patients')
     MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
-    migrate_csv_to_mongodb(CSV_FILE, DB_NAME, COLLECTION_NAME, MONGO_URI)
+    
+    migrate_csv_to_mongodb(CSV_FILE, DB_NAME, MONGO_URI)
